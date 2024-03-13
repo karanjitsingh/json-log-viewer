@@ -1,7 +1,7 @@
 {
-  "name": "tslog-viewer",
-  "displayName": "TsLogViewer",
-  "description": "View TSLog files ",
+  "name": "json-log-viewer",
+  "displayName": "JsonLogViewer",
+  "description": "View Json Log files",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.87.0"
