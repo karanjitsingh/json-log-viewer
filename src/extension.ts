@@ -98,6 +98,9 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
                         padding: 5px 10px;
                         background-color: #252526; /* VS Code dark theme toolbar color */
                         box-shadow: 0 2px 3px rgba(0,0,0,0.4);
+                        display: flex;
+                        gap: 5px;
+                        height: 25px;
                     }
                     #filter-input {
                         padding: 5px;
@@ -171,23 +174,71 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
                     .log-json.expanded {
                         white-space: pre-wrap; /* Preserve formatting while allowing wrapping in expanded mode */
                     }
+
+                    .expand-toggle {
+                        cursor: pointer;
+                        background-color: #3c3c3c; /* Match VS Code's dark theme */
+                        border: none;
+                        border-radius: 4px; /* Optional: rounded corners */
+                        transition: background-color 0.2s; /* Smooth background transition */
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 25px;
+                        width: 27px;
+                        padding: 3px;
+                    }
                     
-            
+                    .expand-toggle:hover {
+                        background-color: #5c5c5c; /* Lighter on hover */
+                    }
+                    
+                    .expand-toggle.expanded {
+                        background-color: #007acc; /* Pressed state */
+                    }
+                    
+                    .expand-toggle.expanded .toggle-arrow {
+                        transform: rotate(90deg); /* Rotate arrow for expanded state */
+                        transform-origin: center; /* Ensure rotation is centered */
+                    }
             
                 </style>
                 <script>
-                    function expandJson(element) {
-                        const encodedJson = element.getAttribute('data-json');
-                        const json = JSON.parse(decodeURIComponent(encodedJson));
-                    
-                        if (element.classList.contains('expanded')) {
-                            element.classList.remove('expanded');
-                            const compactJsonHtml = syntaxHighlightJson(JSON.stringify(json)); // Use syntax highlighting
-                            element.innerHTML = compactJsonHtml; // Update to maintain styles
-                        } else {
+
+                    function expandLogJson(element) {
+                        if (!element.classList.contains('expanded')) {
+                            const encodedJson = element.getAttribute('data-json');
+                            const json = JSON.parse(decodeURIComponent(encodedJson));
+
                             element.classList.add('expanded');
                             const expandedHtml = syntaxHighlightJson(JSON.stringify(json, null, 4));
                             element.innerHTML = expandedHtml;
+                        } 
+                    }
+
+                    function collapseLogJson(element) {
+                        if (element.classList.contains('expanded')) {
+                            const encodedJson = element.getAttribute('data-json');
+                            const json = JSON.parse(decodeURIComponent(encodedJson));
+
+                            element.classList.remove('expanded');
+                            const compactJsonHtml = syntaxHighlightJson(JSON.stringify(json)); // Use syntax highlighting
+                            element.innerHTML = compactJsonHtml; // Update to maintain styles
+                        }
+                    }
+
+                    function expandJson(element, force) {
+                        if (force == "expand") {
+                            expandLogJson(element);
+                        } else if (force == "collapse") {
+                            collapseLogJson(element);
+                        }
+                        else { // Toggle
+                            if (element.classList.contains('expanded')) {
+                                collapseLogJson(element);
+                            } else {
+                                expandLogJson(element);
+                            }
                         }
                     }
 
@@ -210,7 +261,28 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
                             }
                         });
                     });
+
+                    document.getElementById('toggleExpand').addEventListener('click', function() {
+                        this.classList.toggle('expanded');
+                        // Adjust the logic to expand/collapse all JSON elements based on the expanded state
+                        toggleAllJsons(this.classList.contains('expanded'));
+                    });
                 });
+
+                function toggleAllJsons(expand) {
+                    console.log("sdf")
+                    const jsonSpans = document.querySelectorAll('.log-json');
+                    console.log(jsonSpans);
+                    jsonSpans.forEach(span => {
+                        if(expand) {
+                            // Expand logic here
+                            expandJson(span, "expand")
+                        } else {
+                            // Collapse logic here
+                            expandJson(span, "collapse")
+                        }
+                    });
+                }
                 </script>
                 <script>
                 const vscode = acquireVsCodeApi();
@@ -222,12 +294,19 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
                         column: columnNumber
                     });
                 }
+
                 </script>
 
             </head>
             <body>
 			<div id="filter-toolbar">
                 <input type="text" id="filter-input" placeholder="filter"/>
+                
+                <button id="toggleExpand" class="expand-toggle">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path class="toggle-arrow" d="M9 6L15 12L9 18" stroke="#c5c5c5"/>
+                    </svg>
+                </button>
             </div>
             <div id="logs-container">
         `;
