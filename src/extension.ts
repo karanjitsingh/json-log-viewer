@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as Path from 'path';
+import * as fs from 'fs';
 
 // This class represents the custom editor for log files
 class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
@@ -17,10 +19,10 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
         // Read file content
         const content = await vscode.workspace.fs.readFile(document.uri);
         const logText = Buffer.from(content).toString('utf8');
-    
+
         // Generate HTML for the webview
         const htmlContent = this.generateHtmlContent(logText);
-        webviewPanel.webview.options = { 
+        webviewPanel.webview.options = {
             enableScripts: true,
         };
 
@@ -31,7 +33,53 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
 
         webviewPanel.webview.html = htmlContent;
 
-        
+        webviewPanel.webview.onDidReceiveMessage(
+            async (message) => {
+                switch (message.command) {
+                    case 'openFile':
+                        // Try to construct a path relative to the workspace
+                        let fullPath = '';
+                        const workspaceRoot = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : null;
+                        if (workspaceRoot) {
+                            fullPath = Path.join(workspaceRoot, message.filePath);
+                        } else {
+                            fullPath = message.filePath;
+                        }
+
+                        // Check if the file exists in the workspace
+                        fs.exists(fullPath, (exists) => {
+                            if (!exists && workspaceRoot) {
+                                // If the file does not exist relative to the workspace, try the absolute path
+                                fullPath = message.filePath;
+                            }
+
+                            fs.exists(fullPath, (exists) => {
+                                if (exists) {
+                                    const fileUri = vscode.Uri.file(fullPath);
+                                    // Open the document
+                                    vscode.workspace.openTextDocument(fileUri).then(document => {
+                                        // Calculate the position to reveal based on message.line and message.column
+                                        const line = message.line ? message.line - 1 : 0; // VS Code lines are 0-based
+                                        const column = message.column ? message.column - 1 : 0;
+                                        const position = new vscode.Position(line, column);
+
+                                        // Display the document in the editor
+                                        vscode.window.showTextDocument(document, {
+                                            preview: false,
+                                            viewColumn: vscode.ViewColumn.One,
+                                            selection: new vscode.Range(position, position)
+                                        });
+                                    });
+                                } else {
+                                    console.error("File does not exist:", fullPath);
+                                }
+                            });
+                        });
+                        break;
+                }
+            },
+        );
+
     }
 
     private generateHtmlContent(logText: string): string {
@@ -43,7 +91,29 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
             <html>
             <head>
                 <style>
-                    body { font-family: Consolas, monospace; background-color: #1e1e1e; color: #d4d4d4; }
+                    #filter-toolbar {
+                        position: fixed;
+                        top: 0;
+                        width: 100%;
+                        padding: 5px 10px;
+                        background-color: #252526; /* VS Code dark theme toolbar color */
+                        box-shadow: 0 2px 3px rgba(0,0,0,0.4);
+                    }
+                    #filter-input {
+                        padding: 5px;
+                        background-color: #333;
+                        border: 1px solid #3c3c3c;
+                        border-radius: 4px;
+                        color: white;
+                        outline: none;
+                    }
+                    #filter-input::placeholder {
+                        color: #bbb;
+                    }
+                    
+                    body { font-family: Consolas, monospace; background-color: #1e1e1e; color: #d4d4d4;
+                        padding: 40px 0px 0px 0px;
+                    }
                     .log-date { color: #9A9A9A; } /* Lighter grey for less critical info */
                     .log-source { color: #A8A8A8; } /* Light grey for the source, slightly lighter than date */
                     .log-level-silly { color: #FFC0CB; } /* Soft pink, adjust if too bright */
@@ -57,13 +127,14 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
                     .log-entry:hover {
                         background-color: #2e2e2e; /* Darker than the body background for subtle highlighting */
                     }
+                    .file-link { color: #A8A8A8; } /* Light blue for file links */
 
                     .log-entry {
                         display: flex;
                         align-items: baseline; /* Aligns items in their baseline for a more uniform look */
-                        margin-bottom: 3px;
-                        margin-top: 3px;
+                        padding: 3px;
                         gap: 8px; /* Adds some space between the flex items */
+                        
                     }
                     
                     .log-date, .log-level-info, .log-level-warn, .log-level-error, .log-level-fatal, .log-level-debug, .log-level-trace, .log-level-silly {
@@ -122,14 +193,52 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
 
                     function ${this.syntaxHighlightJson.toString()}
                 </script>
+                <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const filterInput = document.getElementById('filter-input');
+                    const logsContainer = document.getElementById('logs-container');
+
+                    filterInput.addEventListener('input', function() {
+                        const filterValue = filterInput.value.toLowerCase();
+
+                        logsContainer.querySelectorAll('.log-entry').forEach(function(entry) {
+                            const logText = entry.textContent.toLowerCase();
+                            if (logText.includes(filterValue)) {
+                                entry.style.display = ''; // Show log entry
+                            } else {
+                                entry.style.display = 'none'; // Hide log entry
+                            }
+                        });
+                    });
+                });
+                </script>
+                <script>
+                const vscode = acquireVsCodeApi();
+                function openFile(filePath, lineNumber, columnNumber) {
+                    vscode.postMessage({
+                        command: 'openFile',
+                        filePath: filePath,
+                        line: lineNumber,
+                        column: columnNumber
+                    });
+                }
+                </script>
+
             </head>
             <body>
-			
+			<div id="filter-toolbar">
+                <input type="text" id="filter-input" placeholder="filter"/>
+            </div>
+            <div id="logs-container">
         `;
 
         // Iterate over each log line, parse it, and append it to the HTML content
         logLines.forEach(line => {
             try {
+                if (line.trim() === "") {
+                    return;
+
+                }
                 const logEntry = JSON.parse(line);
                 const formattedLine = this.formatLogLine(logEntry);
                 htmlContent += `<div class="log-entry">${formattedLine}</div>`;
@@ -141,6 +250,7 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
 
         // Close the HTML content
         htmlContent += `
+            </div>
             </body>
             </html>
         `;
@@ -184,6 +294,7 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
         const logLevel = logEntry.logLevel || '';
         const filePath = logEntry.filePath || '';
         const lineNumber = logEntry.lineNumber || '';
+        const columnNumber = logEntry.columnNumber || '';
         const functionName = logEntry.functionName || '';
         const argumentsArray = logEntry.argumentsArray || [];
 
@@ -204,23 +315,27 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
             } else {
                 return this.escapeHtml(arg);
             }
-
-
-
         }).join(" ");
 
 
+        // Create a link for the file path that opens the file when clicked
+        // Note: encodeURIComponent is used to ensure the path is a valid URI component
 
+        const lineSuffix = lineNumber !== "" ?
+            ":" + lineNumber + (columnNumber !== "" ? ":" + columnNumber : "")
+            : "";
+
+        const fileLink = `<a class="file-link" href="#" onclick="openFile('${filePath}', ${lineNumber || 0}, ${columnNumber || 0})">${filePath}${lineSuffix}</a>`;
 
         return `
-        <div class="log-entry">
-            <span class="log-date">${this.escapeHtml(date)}</span>
-            <span class="${logLevelClass}">${this.escapeHtml(logLevel)}</span>
-            <div class="log-message">
-                <span class="log-source">${this.escapeHtml(`[${filePath}:${lineNumber} ${functionName}]`)}</span>
-                ${processedArguments} <!-- Ensure processedArguments are always wrapped in syntax-highlighting spans -->
+            <div class="log-entry">
+                <span class="log-date">${this.escapeHtml(date)}</span>
+                <span class="${logLevelClass}">${this.escapeHtml(logLevel)}</span>
+                <div class="log-message">
+                    <span class="log-source">[${fileLink} ${this.escapeHtml(functionName)}]</span>
+                    ${processedArguments}
+                </div>
             </div>
-        </div>
         `;
     }
 
@@ -233,7 +348,6 @@ class LogViewerProvider implements vscode.CustomReadonlyEditorProvider {
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
     }
-
 
 }
 
@@ -253,6 +367,16 @@ export function activate(context: vscode.ExtensionContext) {
             }
         )
     );
+
+    // context.subscriptions.push(
+    //     vscode.commands.registerCommand('logViewer.openFile', async (filePath, lineNumber) => {
+    //         const document = await vscode.workspace.openTextDocument(filePath);
+    //         const editor = await vscode.window.showTextDocument(document);
+    //         const position = new vscode.Position(lineNumber - 1, 0); // Line numbers are 0-based in VS Code API
+    //         editor.selection = new vscode.Selection(position, position);
+    //         editor.revealRange(new vscode.Range(position, position));
+    //     })
+    // );
 }
 
 // This function is called when your extension is deactivated
